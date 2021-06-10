@@ -14,7 +14,7 @@ declare -r EFS_STACK_NAME="efs-stack"
 declare _deployment_region=${REGION_VIRGINIA}
 declare _deployment_environment=${DEPLOYMENT_ENVIRONMENT}
 
-
+declare _efs_web_file_share=$(aws cloudformation list-exports --query "Exports [?contains(Name,'${_deployment_environment}-${EFS_STACK_NAME}-WebFileShare')].Value" --output text)
 
 
 
@@ -28,7 +28,7 @@ deploy_ec2() {
                               "KeyNameParameter=it-590-ec2-key" \
                               "VpcStackNameParameter=${_deployment_environment}-${VPC_STACK_NAME}" \
                               "EnvironmentParameter=${_deployment_environment}" \
-                              "EFSStackNameParameter=$_deployment_environment}-${EFS_STACK_NAME}" \
+                              "EFSWebFileShareParameter=${_efs_web_file_share}" \
         --debug
 }
 
@@ -39,6 +39,8 @@ display_usage() {
     echo " Usage: `basename $0` [dev | test | prod] [va | oh] ec2 "
     echo "                                   "
     echo " Example: ./build.sh test va ec2       # Deploy test environment ec2 instances in region US-EAST-1"
+    echo " "
+    echo " EFS WebFileShare == ${_efs_web_file_share}"
     echo "-----------------------------------------------------------------------"
 }
 
