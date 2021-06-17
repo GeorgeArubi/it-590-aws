@@ -3,32 +3,30 @@
 
 # Globals
 declare -r CLOUDFORMATION_DIR="cloudformation"
-declare -r EC2_CF_TEMPLATE_FILE="ec2.yaml"
+declare -r SQS_CF_TEMPLATE_FILE="sqs.yaml"
 declare -r REGION_VIRGINIA="us-east-1"
 declare -r REGION_OHIO="us-east-2"
-declare -r STACK_NAME="ec2-stack"
+declare -r STACK_NAME="sqs-stack"
+declare -r POC_NAME="Your Name"
+declare -r DEFAULT_QUEUE_NAME="Echo-Message-Queue"
 declare -r DEPLOYMENT_ENVIRONMENT="dev"
-declare -r VPC_STACK_NAME="vpc-stack"
-declare -r EFS_STACK_NAME="efs-stack"
 
 declare _deployment_region=${REGION_VIRGINIA}
 declare _deployment_environment=${DEPLOYMENT_ENVIRONMENT}
 
-declare _efs_web_file_share=$(aws cloudformation list-exports --query "Exports [?contains(Name,'${_deployment_environment}-${EFS_STACK_NAME}-WebFileShare')].Value" --output text)
 
 
 
-deploy_ec2() {
-    echo "Deploying EC2 instances..."
+
+deploy_sqs() {
+    echo "Deploying SQS stack"
     aws --region ${_deployment_region} cloudformation deploy \
-        --template-file ${CLOUDFORMATION_DIR}/${EC2_CF_TEMPLATE_FILE} \
+        --template-file ${CLOUDFORMATION_DIR}/${SQS_CF_TEMPLATE_FILE} \
         --stack-name ${_deployment_environment}-${STACK_NAME} \
-        --capabilities CAPABILITY_NAMED_IAM \
-        --parameter-overrides "OwnerParameter=Your Name" \
-                              "KeyNameParameter=it-590-ec2-key" \
-                              "VpcStackNameParameter=${_deployment_environment}-${VPC_STACK_NAME}" \
+        --capabilities CAPABILITY_IAM \
+        --parameter-overrides "POCNameParameter=${POC_NAME}" \
                               "EnvironmentParameter=${_deployment_environment}" \
-                              "EFSWebFileShareParameter=${_efs_web_file_share}" \
+                              "QueueNameParameter=${DEFAULT_QUEUE_NAME}" \
         --debug
 }
 
@@ -36,11 +34,9 @@ deploy_ec2() {
 display_usage() {
     echo
     echo "-----------------------------------------------------------------------"
-    echo " Usage: `basename $0` [dev | test | prod] [va | oh] ec2 "
+    echo " Usage: `basename $0` [dev | test | prod] [va | oh] sqs "
     echo "                                   "
-    echo " Example: ./build.sh test va ec2       # Deploy test environment ec2 instances in region US-EAST-1"
-    echo " "
-    echo " EFS WebFileShare == ${_efs_web_file_share}"
+    echo " Example: ./build.sh test va sqs       # Deploy test environment SQS queue in us-east-1"
     echo "-----------------------------------------------------------------------"
 }
 
@@ -101,9 +97,8 @@ set_environment() {
 
 deploy_cloudformation_script() {
     case $1 in
-        ec2)
-            validate_template
-            deploy_ec2
+        sqs)
+            deploy_sqs
             ;;
 
         *)
@@ -114,8 +109,8 @@ deploy_cloudformation_script() {
 
 
 validate_template(){
-    echo "Validating CF Template: " ${CLOUDFORMATION_DIR}/${EC2_CF_TEMPLATE_FILE}
-    aws cloudformation validate-template --template-body file://${CLOUDFORMATION_DIR}/${EC2_CF_TEMPLATE_FILE}
+    echo "Validating CF Template: " $CLOUDFORMATION_DIR$EC2_CF_TEMPLATE_FILE
+    aws cloudformation validate-template --template-body file://$CLOUDFORMATION_DIR$EFS_CF_TEMPLATE_FILE
 }
 
 
