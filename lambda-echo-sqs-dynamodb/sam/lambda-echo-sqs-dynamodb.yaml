@@ -1,0 +1,324 @@
+AWSTemplateFormatVersion:          '2010-09-09'
+Transform:                         AWS::Serverless-2016-10-31
+Description:                       Multi-Lambda message processing pipeline -- API->Lambda->SQS->[SNS && DynamoDB]
+
+# Parameters
+Parameters:
+  EnvironmentParameter:
+    Type:                          String
+    Default:                       dev
+    AllowedValues:
+      - dev
+      - test
+      - prod
+
+  POCNameParameter:
+    Type:                          String
+    Default:                       Your Name
+
+  SnsTopicNameParameter:
+    Type:                          String
+    Default:                       dev-Echo-Message-Topic
+
+  SqsMessageQueueNameParameter:
+    Type:                          String
+    Default:                       dev-Echo-Message-Queue
+
+  SqsMessageQueueArnParameter:
+    Type:                          String
+    Default:                       sqs-message-queue-arn
+
+  DynamoDbTableNameParameter:
+    Type:                          String
+    Default:                       dev-EchoMessages
+
+
+# # Global Values -- These are applied to all resources
+Globals:
+  Function:
+    Tags:
+      POCName:                     !Ref POCNameParameter
+      Environment:                 !Ref EnvironmentParameter
+
+
+
+# Metadata:
+#   template metadata
+#
+# Mappings:
+#   set of mappings
+#
+# Conditions:
+#   set of conditions
+
+# Resources
+Resources:
+  # Roles
+  APIGatewayCloudWatchLoggingRole:
+    Type:                          AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version:                   2012-10-17
+        Statement:
+          - Effect:                Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:                sts:AssumeRole
+      Path:                        /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  Account:
+    Type:                          AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn:           !GetAtt
+        - APIGatewayCloudWatchLoggingRole
+        - Arn
+
+
+  # Rest API
+  RestAPI:
+    Type:                          AWS::ApiGateway::RestApi
+    Properties:
+      Name:                        !Join ['-', [!Ref EnvironmentParameter, RestAPI]]
+      Description:                 !Join ['-', [!Ref EnvironmentParameter, RestAPI]]
+      DisableExecuteApiEndpoint:   False
+      FailOnWarnings:              True
+      Tags:
+        - Key:                     Environment
+          Value:                   !Ref EnvironmentParameter
+
+
+  RestAPIEchoResource:
+    Type:                          AWS::ApiGateway::Resource
+    Properties:
+      ParentId:                    !GetAtt RestAPI.RootResourceId
+      PathPart:                    echo
+      RestApiId:                   !Ref RestAPI
+
+  RestAPIQueryResource:
+    Type:                          AWS::ApiGateway::Resource
+    Properties:
+      ParentId:                    !GetAtt RestAPI.RootResourceId
+      PathPart:                    query
+      RestApiId:                   !Ref RestAPI
+
+  RestAPIEchoMethod:
+    Type:                          AWS::ApiGateway::Method
+    Properties:
+      HttpMethod:                  ANY
+      AuthorizationType:           NONE
+      Integration:
+        Type:                      AWS_PROXY
+        Uri:                       !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentParameter}-EchoMessage-Function/invocations"
+        IntegrationHttpMethod:     POST
+      ResourceId:                  !Ref RestAPIEchoResource
+      RestApiId:                   !Ref RestAPI
+
+  RestAPIQueryMethod:
+    Type:                          AWS::ApiGateway::Method
+    Properties:
+      HttpMethod:                  ANY
+      AuthorizationType:           NONE
+      Integration:
+        Type:                      AWS_PROXY
+        Uri:                       !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentParameter}-QueryMessage-Function/invocations"
+        IntegrationHttpMethod:     POST
+      ResourceId:                  !Ref RestAPIQueryResource
+      RestApiId:                   !Ref RestAPI
+
+  RestAPIDeployment:
+    Type:                          AWS::ApiGateway::Deployment
+    DependsOn:
+      - RestAPIEchoMethod
+      - RestAPIQueryMethod
+    Properties:
+      Description:                 !Join ['-', [!Ref EnvironmentParameter, !Ref RestAPI, Deployment ]]
+      RestApiId:                   !Ref RestAPI
+      StageName:                   !Ref EnvironmentParameter
+      StageDescription:
+        DataTraceEnabled:          True
+        Description:               !Join ['-', [!Ref EnvironmentParameter, !Ref RestAPI, Stage ]]
+        LoggingLevel:              INFO
+        MetricsEnabled:            True
+        TracingEnabled:            True
+        MethodSettings:
+          - HttpMethod:            '*'
+            ResourcePath:          '/*'
+            DataTraceEnabled:      True
+            LoggingLevel:          INFO
+            MetricsEnabled:        False
+        Tags:
+          - Key:                   Environment
+            Value:                 !Ref EnvironmentParameter
+          - Key:                   POC
+            Value:                 POCNameParameter
+
+  RestAPIEchoLambdaInvokePermission:
+    Type:                          AWS::Lambda::Permission
+    Properties:
+      Action:                      lambda:InvokeFunction
+      FunctionName:                !Ref EchoMessageFunction
+      Principal:                   '*'
+
+  RestAPIQueryLambdaInvokePermission:
+    Type:                          AWS::Lambda::Permission
+    Properties:
+      Action:                      lambda:InvokeFunction
+      FunctionName:                !Ref QueryMessageFunction
+      Principal:                   '*'
+
+  LambdaExecutionRole:
+    Type:                          AWS::IAM::Role
+    Properties:
+      RoleName:                    !Sub "${EnvironmentParameter}-LambdaExecutionRole"
+      Description:                 Allow Lambda to publish to SNS and push and read SQS message queues
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSLambdaExecute'
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole'
+      AssumeRolePolicyDocument:
+        Version:                   "2012-10-17"
+        Statement:
+          - Effect:                Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Tags:
+        - Key:                     Environment
+          Value:                   !Ref EnvironmentParameter
+
+  LambdaExecutionPolicy:
+    Type:                          AWS::IAM::Policy
+    Properties:
+      PolicyName:                  !Join ['-', [!Ref EnvironmentParameter, LambdaExecutionPolicy]]
+      PolicyDocument:
+        Version:                   "2012-10-17"
+        Statement:
+          - Effect:                Allow
+            Action:
+              - 'lambda:*'
+              - 'sqs:*'
+              - 'sqs:DeleteMessage'
+              - 'sqs:GetQueueUrl'
+              - 'sns:Publish'
+              - 'sns:GetTopicAttributes'
+              - 'sqs:SendMessageBatch'
+              - 'sqs:ReceiveMessage'
+              - 'sqs:SendMessage'
+              - 'sqs:GetQueueAttributes'
+              - 'sqs:ListQueues'
+              - 'sns:GetEndpointAttributes'
+              - 'sns:ListTopics'
+              - 'dynamodb:BatchGet*'
+              - 'dynamodb:DescribeStream'
+              - 'dynamodb:DescribeTable'
+              - 'dynamodb:ListTables'
+              - 'dynamodb:DeleteItem'
+              - 'dynamodb:GetShardIterator'
+              - 'dynamodb:PutItem'
+              - 'dynamodb:Update*'
+              - 'dynamodb:Get*'
+              - 'dynamodb:Scan'
+              - 'dynamodb:Query'
+            Resource:              '*'
+              # [
+              #   !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:*',
+              #   !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*',
+              #   !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:*',
+              #   !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*'
+              # ]
+      Roles:
+        - !Ref LambdaExecutionRole
+
+
+  # Event Source Mapping to tell Lambda to automatically receive Messages
+  # from an SQS queue.
+  MessageQueueEventSourceMapping:
+    Type:                          AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize:                   10
+      Enabled:                     True
+      EventSourceArn:              !Ref SqsMessageQueueArnParameter
+      FunctionName:                !Ref ProcessMessageFunction
+
+
+  # Functions
+  # EchoMessageFunction -- Triggered by APIGateway /echo path.
+  # Inserts incoming message into SQS Queue and sends SNS Notification
+  EchoMessageFunction:
+    Type:                          AWS::Serverless::Function
+    # DependsOn:                   LambdaExecutionRole
+    Properties:
+      FunctionName:                !Join ['-', [!Ref EnvironmentParameter, EchoMessage, Function]]
+      Handler:                     echo.lambda_handler
+      Runtime:                     python3.8
+      CodeUri:                     echo.zip
+      Tracing:                     Active
+      Timeout:                     15
+      Role:
+        Fn::GetAtt:                LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          sqs_queue_name:          !Ref SqsMessageQueueNameParameter
+          sns_topic_arn:           !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${SnsTopicNameParameter}"
+          dynamodb_table_name:     !Ref DynamoDbTableNameParameter
+
+
+  QueryMessageFunction:
+    Type:                          AWS::Serverless::Function
+    # DependsOn:                   LambdaExecutionRole
+    Properties:
+      FunctionName:                !Join ['-', [!Ref EnvironmentParameter, QueryMessage, Function]]
+      Handler:                     query.lambda_handler
+      Runtime:                     python3.8
+      CodeUri:                     query.zip
+      Tracing:                     Active
+      Timeout:                     15
+      Role:
+        Fn::GetAtt:                LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          dynamodb_table_name:     !Ref DynamoDbTableNameParameter
+
+  # Functions
+  # ProcessMessageFunction -- Triggered by SQS Message Queue.
+  # Processes messages received from queue and inserts into DynamoDB
+  ProcessMessageFunction:
+    Type:                          AWS::Serverless::Function
+    # DependsOn:                   LambdaExecutionRole
+    Properties:
+      FunctionName:                !Join ['-', [!Ref EnvironmentParameter, ProcessMessage, Function]]
+      Handler:                     process.lambda_handler
+      Runtime:                     python3.8
+      CodeUri:                     process.zip
+      Tracing:                     Active
+      Timeout:                     15
+      Role:
+        Fn::GetAtt:                LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          sqs_queue_name:          !Ref SqsMessageQueueNameParameter
+          dynamodb_table_name:     !Ref DynamoDbTableNameParameter
+
+
+
+# Outputs
+Outputs:
+  EchoApi:
+    Description:                   API Gateway endpoint URL for echo function.
+    Value:                         !Sub "https://${RestAPI}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentParameter}/echo?message=This works!"
+  QueryApi:
+    Description:                   API Gateway endpoint URL for query function.
+    Value:                         !Sub "https://${RestAPI}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentParameter}/query"
+  EchoMessageFunction:
+    Description:                   Echo Message Function ARN
+    Value:                         !GetAtt EchoMessageFunction.Arn
+  ProcessMessageFunction:
+    Description:                   Process Message Function ARN
+    Value:                         !GetAtt ProcessMessageFunction.Arn
+  QueryMessageFunction:
+    Description:                   Query Message Function ARN
+    Value:                         !GetAtt QueryMessageFunction.Arn

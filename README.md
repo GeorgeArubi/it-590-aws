@@ -1,6 +1,9 @@
 # it-590-aws
 
-Collection of example CloudFormation templates, bash shell scripts, Dos/PowerShell scripts, and Python code.
+Collection of example CloudFormation templates, bash shell scripts, Dos/PowerShell scripts, (mostly, for now, bash deployment scripts) and Python code.
+
+**NOTE:** I welcome suggestions for example and pull requests.
+
 
 ## Non-Default Virtual Private Cloud (VPC)
 <a href="vpc/">vpc</a>
@@ -13,7 +16,7 @@ Collection of example CloudFormation templates, bash shell scripts, Dos/PowerShe
 
 ## EC2 Web Server -- Apache + PHP
 
-<a href="ec2-web/">ec2-web</a></br>
+<a href="ec2-web">ec2-web</a></br>
 **Depends On:** <a href="vpc/">vpc</a>
 
 ## Elastic File System (EFS)
